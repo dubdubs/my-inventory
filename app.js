@@ -6,34 +6,42 @@ const itemList = document.getElementById('item-list');
 const modal = document.getElementById('modal');
 const form = document.getElementById('item-form');
 const searchInput = document.getElementById('search');
-const filterCategory = document.getElementById('filter-category');
 const statsEl = document.getElementById('stats');
 const categoryDatalist = document.getElementById('category-list');
+
+// 分类对应的颜色和图标
+const CATEGORY_STYLES = [
+  { color: '#4f46e5', icon: '📦' },
+  { color: '#0891b2', icon: '🔧' },
+  { color: '#059669', icon: '🌿' },
+  { color: '#d97706', icon: '⭐' },
+  { color: '#dc2626', icon: '❤️' },
+  { color: '#7c3aed', icon: '💜' },
+  { color: '#db2777', icon: '🎀' },
+  { color: '#65a30d', icon: '🍃' },
+];
+
+const catStyleMap = {};
+
+function getCatStyle(cat) {
+  if (!catStyleMap[cat]) {
+    const idx = Object.keys(catStyleMap).length % CATEGORY_STYLES.length;
+    catStyleMap[cat] = CATEGORY_STYLES[idx];
+  }
+  return catStyleMap[cat];
+}
 
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
 function getCategories() {
-  return [...new Set(items.map(i => i.category).filter(Boolean))].sort();
+  return [...new Set(items.map(i => i.category || '未分类'))].sort();
 }
 
-function updateCategoryOptions() {
-  const cats = getCategories();
-
-  // filter dropdown
-  const current = filterCategory.value;
-  filterCategory.innerHTML = '<option value="">全部分类</option>';
-  cats.forEach(c => {
-    const opt = document.createElement('option');
-    opt.value = c; opt.textContent = c;
-    filterCategory.appendChild(opt);
-  });
-  filterCategory.value = current;
-
-  // datalist for form
+function updateDatalist() {
   categoryDatalist.innerHTML = '';
-  cats.forEach(c => {
+  getCategories().filter(c => c !== '未分类').forEach(c => {
     const opt = document.createElement('option');
     opt.value = c;
     categoryDatalist.appendChild(opt);
@@ -42,44 +50,78 @@ function updateCategoryOptions() {
 
 function render() {
   const q = searchInput.value.trim().toLowerCase();
-  const cat = filterCategory.value;
 
   const filtered = items.filter(item => {
-    const matchQ = !q || item.name.toLowerCase().includes(q) ||
+    if (!q) return true;
+    return item.name.toLowerCase().includes(q) ||
       (item.note || '').toLowerCase().includes(q) ||
-      (item.location || '').toLowerCase().includes(q);
-    const matchCat = !cat || item.category === cat;
-    return matchQ && matchCat;
+      (item.location || '').toLowerCase().includes(q) ||
+      (item.category || '').toLowerCase().includes(q);
   });
 
-  statsEl.textContent = `共 ${items.length} 件物品，当前显示 ${filtered.length} 件`;
+  statsEl.textContent = `共 ${items.length} 件物品${q ? `，搜索到 ${filtered.length} 件` : ''}`;
 
-  updateCategoryOptions();
+  updateDatalist();
 
-  if (filtered.length === 0) {
-    itemList.innerHTML = '<div class="empty">暂无物品，点击右上角添加吧 🎉</div>';
+  if (items.length === 0) {
+    itemList.innerHTML = '<div class="empty">暂无物品，点击右上角「+ 添加物品」开始记录 🎉</div>';
     return;
   }
 
-  itemList.innerHTML = filtered.map(item => `
-    <div class="item-card">
-      <div class="item-name">${esc(item.name)}</div>
-      <div class="item-meta">
-        ${item.category ? `<span>📁 ${esc(item.category)}</span>` : ''}
-        <span>🔢 x${item.qty}</span>
-        ${item.location ? `<span>📍 ${esc(item.location)}</span>` : ''}
+  if (filtered.length === 0) {
+    itemList.innerHTML = '<div class="empty">没有找到匹配的物品</div>';
+    return;
+  }
+
+  // 按分类分组
+  const groups = {};
+  filtered.forEach(item => {
+    const cat = item.category || '未分类';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(item);
+  });
+
+  const sortedCats = Object.keys(groups).sort((a, b) => {
+    if (a === '未分类') return 1;
+    if (b === '未分类') return -1;
+    return a.localeCompare(b, 'zh');
+  });
+
+  itemList.innerHTML = sortedCats.map(cat => {
+    const style = getCatStyle(cat);
+    const catItems = groups[cat];
+    return `
+      <div class="category-section">
+        <div class="category-header">
+          <span class="category-icon">${style.icon}</span>
+          <span class="category-name">${esc(cat)}</span>
+          <span class="category-count">${catItems.length} 件</span>
+        </div>
+        <div class="item-grid">
+          ${catItems.map(item => `
+            <div class="item-card" style="--accent: ${style.color}">
+              <div class="item-name">${esc(item.name)}</div>
+              <div class="item-meta">
+                <span>🔢 x${item.qty}</span>
+                ${item.location ? `<span>📍 ${esc(item.location)}</span>` : ''}
+              </div>
+              ${item.note ? `<div class="item-note">${esc(item.note)}</div>` : ''}
+              <div class="card-actions">
+                <button class="btn btn-secondary btn-sm" onclick="openEdit('${item.id}')">编辑</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteItem('${item.id}')">删除</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
       </div>
-      ${item.note ? `<div class="item-note">${esc(item.note)}</div>` : ''}
-      <div class="card-actions">
-        <button class="btn btn-secondary" onclick="openEdit('${item.id}')">编辑</button>
-        <button class="btn btn-danger" onclick="deleteItem('${item.id}')">删除</button>
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
 function esc(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function openAdd() {
@@ -132,7 +174,10 @@ form.addEventListener('submit', e => {
     const idx = items.findIndex(i => i.id === id);
     if (idx !== -1) items[idx] = { ...items[idx], ...data };
   } else {
-    items.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2), ...data });
+    items.push({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+      ...data
+    });
   }
 
   save();
@@ -140,7 +185,7 @@ form.addEventListener('submit', e => {
   render();
 });
 
-// Export
+// 导出
 document.getElementById('btn-export').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -149,7 +194,7 @@ document.getElementById('btn-export').addEventListener('click', () => {
   a.click();
 });
 
-// Import
+// 导入
 document.getElementById('import-file').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
@@ -175,6 +220,5 @@ document.getElementById('btn-add').addEventListener('click', openAdd);
 document.getElementById('btn-cancel').addEventListener('click', closeModal);
 modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
 searchInput.addEventListener('input', render);
-filterCategory.addEventListener('change', render);
 
 render();
